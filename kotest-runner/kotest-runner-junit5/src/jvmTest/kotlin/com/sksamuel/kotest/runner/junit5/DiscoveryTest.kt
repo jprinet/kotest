@@ -1,6 +1,5 @@
 package com.sksamuel.kotest.runner.junit5
 
-import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.annotation.Isolate
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.framework.discovery.Discovery
@@ -9,6 +8,7 @@ import io.kotest.framework.discovery.DiscoveryRequest
 import io.kotest.framework.discovery.DiscoverySelector
 import io.kotest.framework.discovery.Modifier
 import io.kotest.matchers.shouldBe
+import io.kotest.runner.junit.platform.KotestEngineChildDescriptor
 import io.kotest.runner.junit.platform.KotestJunitPlatformTestEngine
 import org.junit.platform.engine.UniqueId
 import org.junit.platform.engine.discovery.ClassNameFilter
@@ -31,28 +31,59 @@ class DiscoveryTest : FunSpec({
       val descriptor = engine.discover(req, UniqueId.forEngine("testengine"))
       descriptor.classes.size shouldBe 0
    }
-   test("kotest should return Nil for uniqueId selectors") {
-      val req = LauncherDiscoveryRequestBuilder.request().selectors(DiscoverySelectors.selectUniqueId("[engine:failgood]/[class:whatever]"))
+
+   test("kotest should return Nil for uniqueId selectors if request excludes kotest engine") {
+      val req = LauncherDiscoveryRequestBuilder.request().selectors(DiscoverySelectors.selectUniqueId("[engine:kotest]/[class:com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1]"))
          .filters(
             includeEngines(KotestJunitPlatformTestEngine.EngineId)
          )
          .build()
       val engine = KotestJunitPlatformTestEngine()
       val descriptor = engine.discover(req, UniqueId.forEngine("testengine"))
-      descriptor.classes.size shouldBe 0
+      descriptor.isUniqueIdSelectorsRequest() shouldBe true
+      descriptor.children.size shouldBe 0
    }
 
-   test("kotest should throw for uniqueIds with kotest engine descriptor") {
+   test("kotest should return Nil for uniqueId selectors on non kotest engine") {
+      val req = LauncherDiscoveryRequestBuilder.request().selectors(DiscoverySelectors.selectUniqueId("[engine:failgood]/[class:com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1]"))
+         .filters(
+            includeEngines(KotestJunitPlatformTestEngine.EngineId)
+         )
+         .build()
+      val engine = KotestJunitPlatformTestEngine()
+      val descriptor = engine.discover(req, UniqueId.forEngine(KotestJunitPlatformTestEngine.EngineId))
+      descriptor.isUniqueIdSelectorsRequest() shouldBe true
+      descriptor.children.size shouldBe 0
+   }
+
+   test("kotest should return Nil for uniqueId selectors on non existing class") {
       val req = LauncherDiscoveryRequestBuilder.request().selectors(DiscoverySelectors.selectUniqueId("[engine:${KotestJunitPlatformTestEngine.EngineId}]/[class:whatever]"))
          .filters(
             includeEngines(KotestJunitPlatformTestEngine.EngineId)
          )
          .build()
       val engine = KotestJunitPlatformTestEngine()
-      shouldThrow<RuntimeException> {
-         engine.discover(req, UniqueId.forEngine("testengine"))
-      }
+      val descriptor = engine.discover(req, UniqueId.forEngine(KotestJunitPlatformTestEngine.EngineId))
+      descriptor.isUniqueIdSelectorsRequest() shouldBe true
+      descriptor.children.size shouldBe 0
    }
+
+   test("kotest should return Class for uniqueId selectors") {
+      val req = LauncherDiscoveryRequestBuilder.request().selectors(DiscoverySelectors.selectUniqueId("[engine:${KotestJunitPlatformTestEngine.EngineId}]/[class:com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1]"))
+         .filters(
+            includeEngines(KotestJunitPlatformTestEngine.EngineId)
+         )
+         .build()
+      val engine = KotestJunitPlatformTestEngine()
+      val descriptor = engine.discover(req, UniqueId.forEngine(KotestJunitPlatformTestEngine.EngineId))
+      descriptor.isUniqueIdSelectorsRequest() shouldBe true
+      descriptor.children.size shouldBe 1
+      val firstChild = descriptor.children.first() as KotestEngineChildDescriptor
+      firstChild.classes.map { it.qualifiedName } shouldBe listOf(
+         com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1::class.java.canonicalName,
+      )
+   }
+
    test("kotest should return classes if request includes kotest engine") {
       val req = LauncherDiscoveryRequestBuilder.request()
          .filters(
