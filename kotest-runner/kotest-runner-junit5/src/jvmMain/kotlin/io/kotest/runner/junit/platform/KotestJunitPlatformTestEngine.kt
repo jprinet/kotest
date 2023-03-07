@@ -9,9 +9,9 @@ import io.kotest.engine.listener.PinnedSpecTestEngineListener
 import io.kotest.engine.listener.ThreadSafeTestEngineListener
 import io.kotest.framework.discovery.Discovery
 import io.kotest.mpp.Logger
+import io.kotest.runner.junit.platform.KotestJunitPlatformTestEngine.Companion.EngineId
 import io.kotest.runner.junit.platform.gradle.GradleClassMethodRegexTestFilter
 import io.kotest.runner.junit.platform.gradle.GradlePostDiscoveryFilterExtractor
-import org.junit.platform.engine.DiscoverySelector
 import org.junit.platform.engine.EngineDiscoveryRequest
 import org.junit.platform.engine.ExecutionRequest
 import org.junit.platform.engine.TestEngine
@@ -75,11 +75,19 @@ class KotestJunitPlatformTestEngine : TestEngine {
          .map { Class.forName(it).newInstance() as Extension }
          .forEach { configuration.registry.add(it) }
 
-      TestEngineLauncher(listener)
-         .withConfiguration(configuration)
-         .withExtensions(root.testFilters)
-         .withClasses(root.classes)
-         .launch()
+      if(root.isUniqueIdSelectorsRequest()) {
+         TestEngineLauncher(listener)
+            .withConfiguration(configuration)
+            .withExtensions(root.testFilters)
+            .withClasses(root.getChildrenTestClasses())
+            .launch()
+      } else {
+         TestEngineLauncher(listener)
+            .withConfiguration(configuration)
+            .withExtensions(root.testFilters)
+            .withClasses(root.classes)
+            .launch()
+      }
    }
 
    /**
@@ -110,28 +118,18 @@ class KotestJunitPlatformTestEngine : TestEngine {
       // a method selector is passed by intellij to run just a single method inside a test file
       // this happens for example, when trying to run a junit test alongside kotest tests,
       // and kotest will then run all other tests.
-      // Some other engines run tests via uniqueId selectors
-      // therefore, the presence of a MethodSelector or a UniqueIdSelector means we must run no tests in KT.
-      // if we get a uniqueid with kotest as engine we throw because that should never happen
-      val allSelectors = request.getSelectorsByType(DiscoverySelector::class.java)
-      val containsUnsupported = allSelectors.any {
-         if (it is UniqueIdSelector)
-            if (it.uniqueId.engineId.get() == EngineId)
-               throw RuntimeException("Kotest does not allow running tests via uniqueId")
-            else true
-         else
-            it is MethodSelector
-      }
-      val descriptor = if (!containsUnsupported) {
+      // therefore, the presence of a MethodSelector means we must run no tests in KT.
+      val descriptor = if (request.getSelectorsByType(MethodSelector::class.java).isEmpty()) {
          val discovery = Discovery(emptyList())
          val result = discovery.discover(request.toKotestDiscoveryRequest())
-         KotestEngineDescriptor(
+         val kotestEngineDescriptor = KotestEngineDescriptor(
             uniqueId,
             result.specs,
             result.scripts,
             listOf(gradleClassMethodTestFilter),
             result.error
          )
+         kotestEngineDescriptor.addChild(request.getSelectorsByType(UniqueIdSelector::class.java))
       } else {
          KotestEngineDescriptor(uniqueId, emptyList(), emptyList(), emptyList(), null)
       }
@@ -141,14 +139,99 @@ class KotestJunitPlatformTestEngine : TestEngine {
    }
 }
 
-class KotestEngineDescriptor(
+open class KotestEngineDescriptor(
    id: UniqueId,
    val classes: List<KClass<out Spec>>,
    val scripts: List<KClass<*>>,
    val testFilters: List<TestFilter>,
    val error: Throwable?, // an error during discovery
 ) : EngineDescriptor(id, "Kotest") {
+
+   private var isUniqueIdSelectorsRequest = false
+
    override fun mayRegisterTests(): Boolean = true
+
+   fun isUniqueIdSelectorsRequest(): Boolean {
+      return isUniqueIdSelectorsRequest
+   }
+
+   fun addChild(uniqueIdSelectors: List<UniqueIdSelector>): KotestEngineDescriptor {
+      if (uniqueIdSelectors.isNotEmpty()) {
+         isUniqueIdSelectorsRequest = true
+         if(uniqueId.engineId.get() == EngineId) {
+            addChildByUniqueIdSelectors(uniqueIdSelectors)
+         }
+      } else {
+         addChildByClasses()
+      }
+
+      return this
+   }
+
+   private fun addChildByClasses() {
+      this.classes.forEach {
+         it.qualifiedName?.let { qualifiedName ->
+            addChildByQualifiedName(qualifiedName)
+         }
+      }
+   }
+
+   private fun addChildByUniqueIdSelectors(uniqueIdSelectors: List<UniqueIdSelector>) {
+      uniqueIdSelectors.forEach { uniqueIdSelector ->
+         if (uniqueIdSelector.uniqueId.segments.any { segment ->
+               segment.type.equals("engine") && segment.value.equals(EngineId)
+         }) {
+            uniqueIdSelector.uniqueId.segments.forEach { segment ->
+               if (segment.type == KotestEngineChildDescriptor.CLASS_MARKER) {
+                  addChildByQualifiedName(segment.value)
+               }
+            }
+         }
+      }
+   }
+
+   private fun addChildByQualifiedName(qualifiedName: String) {
+      val childDescriptor = KotestEngineChildDescriptor.fromQualifiedClassName(uniqueId, qualifiedName)
+      childDescriptor?.let {
+         this.addChild(childDescriptor)
+         childDescriptor.setParent(this)
+      }
+   }
+
+   fun getChildrenTestClasses() : List<KClass<out Spec>> {
+      if(this.children.isNotEmpty()) {
+         val filteredClasses = emptyList<KClass<out Spec>>().toMutableList()
+         this.children.forEach {
+            filteredClasses.addAll((it as KotestEngineDescriptor).classes)
+         }
+         return filteredClasses
+      }
+
+      return emptyList()
+   }
+}
+
+class KotestEngineChildDescriptor(
+   id: UniqueId,
+   className: KClass<Spec>
+): KotestEngineDescriptor(id, listOf(className), emptyList(), emptyList(), null) {
+
+   companion object {
+
+      internal const val CLASS_MARKER = "class"
+      fun fromQualifiedClassName(uniqueId: UniqueId, qualifiedClassName: String): KotestEngineChildDescriptor? {
+         return try {
+            @Suppress("UNCHECKED_CAST")
+            KotestEngineChildDescriptor(
+               uniqueId.append(CLASS_MARKER, qualifiedClassName),
+               Class.forName(qualifiedClassName).kotlin as KClass<Spec>
+            )
+         } catch(e: ClassNotFoundException) {
+            null
+         }
+      }
+   }
+
 }
 
 fun EngineDiscoveryRequest.engineFilters() = when (this) {
