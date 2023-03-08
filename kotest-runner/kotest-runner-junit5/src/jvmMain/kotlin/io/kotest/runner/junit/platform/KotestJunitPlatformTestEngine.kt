@@ -178,9 +178,7 @@ open class KotestEngineDescriptor(
 
    private fun addChildByUniqueIdSelectors(uniqueIdSelectors: List<UniqueIdSelector>) {
       uniqueIdSelectors.forEach { uniqueIdSelector ->
-         if (uniqueIdSelector.uniqueId.segments.any { segment ->
-               segment.type.equals("engine") && segment.value.equals(EngineId)
-         }) {
+         if(EngineId == uniqueIdSelector.uniqueId.engineId.orElse(null)) {
             uniqueIdSelector.uniqueId.segments.forEach { segment ->
                if (segment.type == KotestEngineChildDescriptor.CLASS_MARKER) {
                   addChildByQualifiedName(segment.value)
