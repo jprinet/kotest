@@ -200,11 +200,11 @@ open class KotestEngineDescriptor(
 
    fun getChildrenTestClasses() : List<KClass<out Spec>> {
       if(this.children.isNotEmpty()) {
-         val filteredClasses = emptyList<KClass<out Spec>>().toMutableList()
+         val childrenTestClasses = emptyList<KClass<out Spec>>().toMutableList()
          this.children.forEach {
-            filteredClasses.addAll((it as KotestEngineDescriptor).classes)
+            childrenTestClasses.addAll((it as KotestEngineDescriptor).classes)
          }
-         return filteredClasses
+         return childrenTestClasses
       }
 
       return emptyList()
