@@ -23,6 +23,10 @@ import org.junit.platform.engine.support.descriptor.EngineDescriptor
 import org.junit.platform.launcher.LauncherDiscoveryRequest
 import java.util.*
 import kotlin.reflect.KClass
+import io.kotest.core.descriptors.toDescriptor
+import io.kotest.core.names.DisplayNameFormatter
+import io.kotest.engine.test.names.getDisplayNameFormatter
+import org.junit.platform.engine.support.descriptor.ClassSource
 
 /**
  * A Kotest implementation of a Junit Platform [TestEngine].
@@ -55,7 +59,8 @@ class KotestJunitPlatformTestEngine : TestEngine {
 
    private fun execute(request: ExecutionRequest, root: KotestEngineDescriptor) {
 
-      val configuration = ProjectConfiguration()
+      val engineDescriptor = request.rootTestDescriptor as KotestEngineDescriptor
+      val configuration = engineDescriptor.configuration
 
       val listener = ThreadSafeTestEngineListener(
          PinnedSpecTestEngineListener(
@@ -64,30 +69,16 @@ class KotestJunitPlatformTestEngine : TestEngine {
                   request.engineExecutionListener
                ),
                root,
+               engineDescriptor.formatter
             )
          )
       )
 
-      request.configurationParameters.get("kotest.extensions").orElseGet { "" }
-         .split(',')
-         .map { it.trim() }
-         .filter { it.isNotBlank() }
-         .map { Class.forName(it).newInstance() as Extension }
-         .forEach { configuration.registry.add(it) }
-
-      if(root.isUniqueIdSelectorsRequest()) {
-         TestEngineLauncher(listener)
-            .withConfiguration(configuration)
-            .withExtensions(root.testFilters)
-            .withClasses(root.getChildrenTestClasses())
-            .launch()
-      } else {
-         TestEngineLauncher(listener)
-            .withConfiguration(configuration)
-            .withExtensions(root.testFilters)
-            .withClasses(root.classes)
-            .launch()
-      }
+      TestEngineLauncher(listener)
+         .withConfiguration(configuration)
+         .withExtensions(root.testFilters)
+         .withClasses(root.classes)
+         .launch()
    }
 
    /**
@@ -110,7 +101,7 @@ class KotestJunitPlatformTestEngine : TestEngine {
       // if we are excluded from the engines then we say goodnight according to junit rules
       val isKotest = request.engineFilters().all { it.toPredicate().test(this) }
       if (!isKotest)
-         return KotestEngineDescriptor(uniqueId, emptyList(), emptyList(), emptyList(), null)
+         return KotestEngineDescriptor(uniqueId, emptyList(), emptyList(), null)
 
       val classMethodFilterRegexes = GradlePostDiscoveryFilterExtractor.extract(request.postFilters())
       val gradleClassMethodTestFilter = GradleClassMethodRegexTestFilter(classMethodFilterRegexes)
@@ -124,14 +115,21 @@ class KotestJunitPlatformTestEngine : TestEngine {
          val result = discovery.discover(request.toKotestDiscoveryRequest())
          val kotestEngineDescriptor = KotestEngineDescriptor(
             uniqueId,
-            result.specs,
             result.scripts,
             listOf(gradleClassMethodTestFilter),
             result.error
          )
-         kotestEngineDescriptor.addChild(request.getSelectorsByType(UniqueIdSelector::class.java))
+
+         request.configurationParameters.get("kotest.extensions").orElseGet { "" }
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .map { Class.forName(it).newInstance() as Extension }
+            .forEach { kotestEngineDescriptor.configuration.registry.add(it) }
+
+         kotestEngineDescriptor.withChildren(result.specs, request.getSelectorsByType(UniqueIdSelector::class.java))
       } else {
-         KotestEngineDescriptor(uniqueId, emptyList(), emptyList(), emptyList(), null)
+         KotestEngineDescriptor(uniqueId, emptyList(), emptyList(), null)
       }
 
       logger.log { Pair(null, "JUnit discovery completed [descriptor=$descriptor]") }
@@ -141,46 +139,42 @@ class KotestJunitPlatformTestEngine : TestEngine {
 
 open class KotestEngineDescriptor(
    id: UniqueId,
-   val classes: List<KClass<out Spec>>,
    val scripts: List<KClass<*>>,
    val testFilters: List<TestFilter>,
    val error: Throwable?, // an error during discovery
 ) : EngineDescriptor(id, "Kotest") {
 
-   private var isUniqueIdSelectorsRequest = false
+   internal val configuration = ProjectConfiguration()
+   internal val formatter: DisplayNameFormatter by lazy {
+      getDisplayNameFormatter(configuration.registry, configuration)
+   }
+
+   internal val classes: List<KClass<out Spec>>
+      get() = children.map {
+         (it.source.get() as ClassSource).javaClass.kotlin as KClass<out Spec>
+      }
 
    override fun mayRegisterTests(): Boolean = true
 
-   fun isUniqueIdSelectorsRequest(): Boolean {
-      return isUniqueIdSelectorsRequest
-   }
-
-   fun addChild(uniqueIdSelectors: List<UniqueIdSelector>): KotestEngineDescriptor {
+   fun withChildren(classes: List<KClass<out Spec>>, uniqueIdSelectors: List<UniqueIdSelector>): KotestEngineDescriptor {
       if (uniqueIdSelectors.isNotEmpty()) {
-         isUniqueIdSelectorsRequest = true
-         if(uniqueId.engineId.get() == EngineId) {
+         if (uniqueId.engineId.get() == EngineId) {
             addChildByUniqueIdSelectors(uniqueIdSelectors)
          }
       } else {
-         addChildByClasses()
+         classes.forEach {
+            addChild(getSpecDescriptor(this, it.toDescriptor(), formatter.format(it)))
+         }
       }
 
       return this
    }
 
-   private fun addChildByClasses() {
-      this.classes.forEach {
-         it.qualifiedName?.let { qualifiedName ->
-            addChildByQualifiedName(qualifiedName)
-         }
-      }
-   }
-
    private fun addChildByUniqueIdSelectors(uniqueIdSelectors: List<UniqueIdSelector>) {
       uniqueIdSelectors.forEach { uniqueIdSelector ->
-         if(EngineId == uniqueIdSelector.uniqueId.engineId.orElse(null)) {
+         if (EngineId == uniqueIdSelector.uniqueId.engineId.orElse(null)) {
             uniqueIdSelector.uniqueId.segments.forEach { segment ->
-               if (segment.type == KotestEngineChildDescriptor.CLASS_MARKER) {
+               if (segment.type == Segment.Spec.value) {
                   addChildByQualifiedName(segment.value)
                }
             }
@@ -188,48 +182,10 @@ open class KotestEngineDescriptor(
       }
    }
 
-   private fun addChildByQualifiedName(qualifiedName: String) {
-      val childDescriptor = KotestEngineChildDescriptor.fromQualifiedClassName(uniqueId, qualifiedName)
-      childDescriptor?.let {
-         this.addChild(childDescriptor)
-         childDescriptor.setParent(this)
-      }
+   private fun addChildByQualifiedName(qualifiedClassName: String) {
+      val klass = Class.forName(qualifiedClassName).kotlin
+      addChild(getSpecDescriptor(this, klass.toDescriptor(), formatter.format(klass)))
    }
-
-   fun getChildrenTestClasses() : List<KClass<out Spec>> {
-      if(this.children.isNotEmpty()) {
-         val childrenTestClasses = emptyList<KClass<out Spec>>().toMutableList()
-         this.children.forEach {
-            childrenTestClasses.addAll((it as KotestEngineDescriptor).classes)
-         }
-         return childrenTestClasses
-      }
-
-      return emptyList()
-   }
-}
-
-class KotestEngineChildDescriptor(
-   id: UniqueId,
-   className: KClass<Spec>
-): KotestEngineDescriptor(id, listOf(className), emptyList(), emptyList(), null) {
-
-   companion object {
-
-      internal const val CLASS_MARKER = "class"
-      fun fromQualifiedClassName(uniqueId: UniqueId, qualifiedClassName: String): KotestEngineChildDescriptor? {
-         return try {
-            @Suppress("UNCHECKED_CAST")
-            KotestEngineChildDescriptor(
-               uniqueId.append(CLASS_MARKER, qualifiedClassName),
-               Class.forName(qualifiedClassName).kotlin as KClass<Spec>
-            )
-         } catch(e: ClassNotFoundException) {
-            null
-         }
-      }
-   }
-
 }
 
 fun EngineDiscoveryRequest.engineFilters() = when (this) {

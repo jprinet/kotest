@@ -8,12 +8,13 @@ import io.kotest.framework.discovery.DiscoveryRequest
 import io.kotest.framework.discovery.DiscoverySelector
 import io.kotest.framework.discovery.Modifier
 import io.kotest.matchers.shouldBe
-import io.kotest.runner.junit.platform.KotestEngineChildDescriptor
 import io.kotest.runner.junit.platform.KotestJunitPlatformTestEngine
+import io.kotest.runner.junit.platform.Segment
 import org.junit.platform.engine.UniqueId
 import org.junit.platform.engine.discovery.ClassNameFilter
 import org.junit.platform.engine.discovery.DiscoverySelectors
 import org.junit.platform.engine.discovery.PackageNameFilter
+import org.junit.platform.engine.support.descriptor.ClassSource
 import org.junit.platform.launcher.EngineFilter.excludeEngines
 import org.junit.platform.launcher.EngineFilter.includeEngines
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder
@@ -40,7 +41,6 @@ class DiscoveryTest : FunSpec({
          .build()
       val engine = KotestJunitPlatformTestEngine()
       val descriptor = engine.discover(req, UniqueId.forEngine("testengine"))
-      descriptor.isUniqueIdSelectorsRequest() shouldBe true
       descriptor.children.size shouldBe 0
    }
 
@@ -52,7 +52,6 @@ class DiscoveryTest : FunSpec({
          .build()
       val engine = KotestJunitPlatformTestEngine()
       val descriptor = engine.discover(req, UniqueId.forEngine(KotestJunitPlatformTestEngine.EngineId))
-      descriptor.isUniqueIdSelectorsRequest() shouldBe true
       descriptor.children.size shouldBe 0
    }
 
@@ -64,24 +63,20 @@ class DiscoveryTest : FunSpec({
          .build()
       val engine = KotestJunitPlatformTestEngine()
       val descriptor = engine.discover(req, UniqueId.forEngine(KotestJunitPlatformTestEngine.EngineId))
-      descriptor.isUniqueIdSelectorsRequest() shouldBe true
       descriptor.children.size shouldBe 0
    }
 
    test("kotest should return Class for uniqueId selectors") {
-      val req = LauncherDiscoveryRequestBuilder.request().selectors(DiscoverySelectors.selectUniqueId("[engine:${KotestJunitPlatformTestEngine.EngineId}]/[class:com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1]"))
-         .filters(
-            includeEngines(KotestJunitPlatformTestEngine.EngineId)
-         )
+      val engineId = UniqueId.forEngine(KotestJunitPlatformTestEngine.EngineId)
+      val testClass = com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1::class
+      val req = LauncherDiscoveryRequestBuilder.request()
+         .selectors(DiscoverySelectors.selectUniqueId(engineId.append(Segment.Spec.value, testClass.qualifiedName)))
          .build()
       val engine = KotestJunitPlatformTestEngine()
-      val descriptor = engine.discover(req, UniqueId.forEngine(KotestJunitPlatformTestEngine.EngineId))
-      descriptor.isUniqueIdSelectorsRequest() shouldBe true
+      val descriptor = engine.discover(req, engineId)
       descriptor.children.size shouldBe 1
-      val firstChild = descriptor.children.first() as KotestEngineChildDescriptor
-      firstChild.classes.map { it.qualifiedName } shouldBe listOf(
-         com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1::class.java.canonicalName,
-      )
+      val firstChild = descriptor.children.first()
+      (firstChild.source.get() as ClassSource).javaClass shouldBe testClass.java
    }
 
    test("kotest should return classes if request includes kotest engine") {
@@ -217,6 +212,7 @@ class DiscoveryTest : FunSpec({
       val engine = KotestJunitPlatformTestEngine()
       val descriptor = engine.discover(req, UniqueId.forEngine("testengine"))
       descriptor.classes.map { it.qualifiedName } shouldBe listOf(com.sksamuel.kotest.runner.junit5.mypackage.DummySpec2::class.java.canonicalName)
+      descriptor.children.map { (it.source.get() as ClassSource).javaClass } shouldBe listOf(com.sksamuel.kotest.runner.junit5.mypackage.DummySpec2::class.java)
    }
 
    test("kotest should support multiple selected class names") {
@@ -231,6 +227,10 @@ class DiscoveryTest : FunSpec({
       descriptor.classes.map { it.qualifiedName } shouldBe listOf(
          com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1::class.java.canonicalName,
          com.sksamuel.kotest.runner.junit5.mypackage.DummySpec2::class.java.canonicalName,
+      )
+      descriptor.children.map { (it.source.get() as ClassSource).javaClass } shouldBe listOf(
+         com.sksamuel.kotest.runner.junit5.mypackage.DummySpec1::class.java,
+         com.sksamuel.kotest.runner.junit5.mypackage.DummySpec2::class.java,
       )
    }
 
