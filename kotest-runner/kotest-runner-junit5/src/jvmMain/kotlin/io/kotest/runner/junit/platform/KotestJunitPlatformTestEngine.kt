@@ -137,7 +137,7 @@ class KotestJunitPlatformTestEngine : TestEngine {
    }
 }
 
-open class KotestEngineDescriptor(
+class KotestEngineDescriptor(
    id: UniqueId,
    val scripts: List<KClass<*>>,
    val testFilters: List<TestFilter>,
