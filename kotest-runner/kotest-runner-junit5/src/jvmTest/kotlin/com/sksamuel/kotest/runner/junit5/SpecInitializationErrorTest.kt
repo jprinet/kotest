@@ -24,6 +24,8 @@ class SpecInitializationErrorTest : FunSpec({
 
       val root = KotestEngineDescriptor(
          UniqueId.forEngine("kotest"),
+         ProjectConfiguration(),
+         emptyList(),
          emptyList(),
          emptyList(),
          null,
@@ -55,6 +57,8 @@ class SpecInitializationErrorTest : FunSpec({
 
       val root = KotestEngineDescriptor(
          UniqueId.forEngine("kotest"),
+         ProjectConfiguration(),
+         emptyList(),
          emptyList(),
          emptyList(),
          null,

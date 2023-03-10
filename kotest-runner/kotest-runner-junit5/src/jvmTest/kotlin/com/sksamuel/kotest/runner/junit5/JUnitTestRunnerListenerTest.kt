@@ -1,5 +1,6 @@
 package com.sksamuel.kotest.runner.junit5
 
+import io.kotest.core.config.ProjectConfiguration
 import io.kotest.core.descriptors.append
 import io.kotest.core.descriptors.toDescriptor
 import io.kotest.core.names.TestName
@@ -28,6 +29,8 @@ class JUnitTestRunnerListenerTest : DescribeSpec({
 
          val root = KotestEngineDescriptor(
             UniqueId.forEngine("kotest"),
+            ProjectConfiguration(),
+            emptyList(),
             emptyList(),
             emptyList(),
             null,
