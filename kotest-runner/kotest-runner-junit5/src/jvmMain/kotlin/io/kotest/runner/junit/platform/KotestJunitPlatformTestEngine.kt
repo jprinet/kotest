@@ -59,9 +59,6 @@ class KotestJunitPlatformTestEngine : TestEngine {
 
    private fun execute(request: ExecutionRequest, root: KotestEngineDescriptor) {
 
-      val engineDescriptor = request.rootTestDescriptor as KotestEngineDescriptor
-      val configuration = engineDescriptor.configuration
-
       val listener = ThreadSafeTestEngineListener(
          PinnedSpecTestEngineListener(
             JUnitTestEngineListener(
@@ -69,13 +66,13 @@ class KotestJunitPlatformTestEngine : TestEngine {
                   request.engineExecutionListener
                ),
                root,
-               engineDescriptor.formatter
+               root.formatter
             )
          )
       )
 
       TestEngineLauncher(listener)
-         .withConfiguration(configuration)
+         .withConfiguration(root.configuration)
          .withExtensions(root.testFilters)
          .withClasses(root.classes)
          .launch()
